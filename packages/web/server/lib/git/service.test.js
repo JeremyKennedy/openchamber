@@ -6505,7 +6505,6 @@ describe('worktree task titles', () => {
     expect(await renameGeneratedWorktreeBranch(linked, 'fix/other')).toBeNull();
   });
 
-  it('keeps the recorded prefix of an issue branch when renaming it', async () => {
   it('records a generated name even while another git process holds the config lock', async () => {
     const { repo, linked } = createLinkedWorktree();
     const lock = path.join(repo, '.git', 'config.lock');
@@ -6516,6 +6515,7 @@ describe('worktree task titles', () => {
     expect(await readRenameableGeneratedBranch(linked)).toBe('feature/task');
   });
 
+  it('keeps the recorded prefix of an issue branch when renaming it', async () => {
     const { repo, linked } = createLinkedWorktree();
     runGit(linked, ['branch', '-m', 'feature/task', 'issue-180-merry-salamander']);
     await markGeneratedBranchName(repo, 'issue-180-merry-salamander', 'issue-180-');
