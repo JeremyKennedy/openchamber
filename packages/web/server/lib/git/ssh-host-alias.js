@@ -64,7 +64,7 @@ const readHost = (host, user, configFile) => new Promise((resolve) => {
   child.on('close', (code) => {
     clearTimeout(timer);
     finish(code === 0
-      ? { hostname: settingOf(output, 'hostname') }
+      ? { hostname: settingOf(output, 'hostname'), hostKeyAlias: settingOf(output, 'hostkeyalias') }
       : null);
   });
 });
@@ -91,9 +91,16 @@ export function createSshHostResolver({ configFile, read = (host, user) => readH
 
 const resolveSshHost = createSshHostResolver();
 
-/** Match only a direct effective HostName, never a shared address or HostKeyAlias. */
+/**
+ * Whether the alias reaches `hostname`: its effective HostName is that name, or
+ * the configuration declares it as the alias's HostKeyAlias. A shared address
+ * is not enough — two services can sit behind one address — but a HostKeyAlias
+ * is the person's own statement of which host key the alias presents, so it
+ * names the service rather than coinciding with its address.
+ */
 export async function sshHostReaches(host, hostname, user = '', resolve = resolveSshHost) {
   if (!isSshHostName(host) || !isSshHostName(hostname)) return false;
   const remote = await resolve(host, user);
-  return remote !== null && remote.hostname === hostname;
+  if (remote === null) return false;
+  return remote.hostname === hostname || remote.hostKeyAlias === hostname;
 }

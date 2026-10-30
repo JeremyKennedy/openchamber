@@ -50,7 +50,7 @@ describe('SSH host aliases', () => {
       const resolve = createSshHostResolver({ configFile });
       await expect(sshHostReaches('alias', 'git.example.com', '', resolve)).resolves.toBe(true);
       await expect(sshHostReaches('alias', 'git.example.com', sshUserOf('git@alias:owner/repo.git'), resolve)).resolves.toBe(false);
-      await expect(resolve('alias', 'git')).resolves.toEqual({ hostname: 'other.example.com' });
+      await expect(resolve('alias', 'git')).resolves.toEqual({ hostname: 'other.example.com', hostKeyAlias: null });
       await expect(sshHostReaches('alias', 'git.example.com', 'Git', resolve)).resolves.toBe(true);
       await expect(sshHostReaches('alias', 'other.example.com', 'git', resolve)).resolves.toBe(true);
       const resolved = await resolveGiteaReposFromDirectory('/repo', 'https://git.example.com', '', {
@@ -136,8 +136,41 @@ describe('SSH hosts reaching an instance', () => {
     await expect(sshHostReaches('forgejo', 'git.example.com', '', resolve)).resolves.toBe(true);
   });
 
-  it('refuses an alias whose only match is its host key alias', async () => {
+  it('matches an alias that declares the instance host as its host key alias', async () => {
+    // A Tailscale or private-network address as HostName, with the instance's
+    // name as HostKeyAlias: the configuration says which service the alias
+    // presents, even though its HostName is not that name.
     const resolve = resolver({ forgejo: { hostname: '10.0.0.4', hostKeyAlias: 'git.example.com' } });
+
+    await expect(sshHostReaches('forgejo', 'git.example.com', '', resolve)).resolves.toBe(true);
+  });
+
+  it('reads a host key alias from a real SSH configuration', async () => {
+    const directory = await mkdtemp(path.join(process.cwd(), '.ssh-host-alias-test-'));
+    try {
+      const configFile = path.join(directory, 'config');
+      await writeFile(configFile, [
+        'Host forgejo',
+        '  HostName 10.0.0.4',
+        '  HostKeyAlias git.example.com',
+        '',
+        'Host other',
+        '  HostName 10.0.0.4',
+        '',
+      ].join('\n'));
+      const resolve = createSshHostResolver({ configFile });
+      await expect(resolve('forgejo')).resolves.toEqual({ hostname: '10.0.0.4', hostKeyAlias: 'git.example.com' });
+      await expect(resolve('other')).resolves.toEqual({ hostname: '10.0.0.4', hostKeyAlias: null });
+      await expect(sshHostReaches('forgejo', 'git.example.com', '', resolve)).resolves.toBe(true);
+      // The same address alone is not an identity.
+      await expect(sshHostReaches('other', 'git.example.com', '', resolve)).resolves.toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a host key alias that names another host', async () => {
+    const resolve = resolver({ forgejo: { hostname: '10.0.0.4', hostKeyAlias: 'git.elsewhere.com' } });
 
     await expect(sshHostReaches('forgejo', 'git.example.com', '', resolve)).resolves.toBe(false);
   });
