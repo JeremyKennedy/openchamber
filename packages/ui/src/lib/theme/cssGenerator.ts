@@ -2,7 +2,7 @@ import type { Theme } from '@/types/theme';
 import { SEMANTIC_TYPOGRAPHY, VSCODE_TYPOGRAPHY } from '@/lib/typography';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { resolveSyntaxTokens } from './syntax';
-import { withOpacity } from './color';
+import { onColor, withOpacity } from './color';
 import { getReadableThemeColors } from './readableColors';
 
 const hexToRgb = (value: string | undefined | null): string | null => {
@@ -46,6 +46,7 @@ export class CSSVariableGenerator {
     cssVars.push(...this.generateSurfaceColors(theme.colors.surface));
     cssVars.push(...this.generateInteractiveColors(theme.colors.interactive));
     cssVars.push(...this.generateStatusColors(theme.colors.status));
+    cssVars.push(...this.generateQuestionColors(theme));
     cssVars.push(...this.generatePullRequestColors(theme));
 
     cssVars.push(...this.generateSyntaxColors(theme.colors.syntax));
@@ -238,6 +239,23 @@ const sidebarBaseRgb = hexToRgb(theme.colors.surface.muted);
     vars.push(`  --status-info-border: ${status.infoBorder};`);
 
     return vars;
+  }
+
+  /**
+   * The pending-question mark is not "info": a turn that is still running and a
+   * turn blocked on the user's answer must not read the same. The violet is
+   * app-owned like the merged-PR default, so every theme, built-in or imported,
+   * gets it without the theme schema having to declare it.
+   */
+  private generateQuestionColors(theme: Theme): string[] {
+    const dark = theme.metadata.variant === 'dark';
+    const base = dark ? '#a78bfa' : '#7c3aed';
+    return [
+      `  --status-question: ${base};`,
+      `  --status-question-foreground: ${onColor(base, theme.colors.surface.background)};`,
+      `  --status-question-background: ${withOpacity(base, 0.16)};`,
+      `  --status-question-border: ${withOpacity(base, 0.5)};`,
+    ];
   }
 
   private generatePullRequestColors(theme: Theme): string[] {

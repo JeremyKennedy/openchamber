@@ -1068,8 +1068,8 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
       ) : null}
       {hasPendingForm ? (
         <RowMarkTooltip label={pendingFormLabel}>
-          <span className="inline-flex flex-shrink-0 items-center text-status-warning" aria-label={pendingFormLabel}>
-            <Icon name="question" className="h-3 w-3" />
+          <span className="inline-flex flex-shrink-0 items-center rounded border border-status-question-border bg-status-question px-1.5 text-status-question-foreground" aria-label={pendingFormLabel}>
+            <Icon name="question" className="h-3.5 w-3.5" />
           </span>
         </RowMarkTooltip>
       ) : null}

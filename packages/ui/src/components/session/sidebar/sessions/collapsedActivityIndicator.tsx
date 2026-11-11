@@ -20,17 +20,25 @@ export function CollapsedActivityIndicator({
   className?: string;
 }): React.ReactNode {
   const { t } = useI18n();
-  if (state === 'permission' || state === 'form') {
-    const label = state === 'permission'
-      ? t('sessions.sidebar.session.status.permissionRequired')
-      : t('sessions.sidebar.session.status.questionPending');
+  if (state === 'permission') {
+    const label = t('sessions.sidebar.session.status.permissionRequired');
+    return (
+      <RowMarkTooltip label={label}>
+        <span className={cn('inline-flex shrink-0 items-center text-status-warning', className)} aria-label={label}>
+          <Icon name="shield" className="h-3 w-3" />
+        </span>
+      </RowMarkTooltip>
+    );
+  }
+  if (state === 'form') {
+    const label = t('sessions.sidebar.session.status.questionPending');
     return (
       <RowMarkTooltip label={label}>
         <span
-          className={cn('inline-flex shrink-0 items-center text-status-warning', className)}
+          className={cn('inline-flex shrink-0 items-center rounded border border-status-question-border bg-status-question px-1.5 text-status-question-foreground', className)}
           aria-label={label}
         >
-          <Icon name={state === 'permission' ? 'shield' : 'question'} className="h-3 w-3" />
+          <Icon name="question" className="h-3.5 w-3.5" />
         </span>
       </RowMarkTooltip>
     );

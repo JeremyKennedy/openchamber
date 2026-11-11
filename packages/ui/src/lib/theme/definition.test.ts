@@ -263,6 +263,19 @@ describe('rendered theme color pairs', () => {
     }
   });
 
+  test('keeps the pending-question mark readable on its own fill', () => {
+    const generator = new CSSVariableGenerator();
+    for (const theme of themes) {
+      const css = generator.generate(theme);
+      const base = /--status-question: ([^;]+);/.exec(css)?.[1];
+      const foreground = /--status-question-foreground: ([^;]+);/.exec(css)?.[1];
+      expect(base).toBeDefined();
+      expect(foreground).toBeDefined();
+      expect(contrastRatio(foreground!, base!)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(base!, theme.colors.surface.background)).toBeGreaterThanOrEqual(3);
+    }
+  });
+
   test('keeps error text readable on the terminal alert surface', () => {
     for (const theme of themes) {
       const css = new CSSVariableGenerator().generate(theme);
