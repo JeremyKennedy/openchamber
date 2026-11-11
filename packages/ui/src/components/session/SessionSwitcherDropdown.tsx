@@ -14,11 +14,13 @@ import { SessionActivityIndicator } from '@/components/session/SessionActivityIn
 import { useWaitingBlink } from '@/hooks/useDurationTicker';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSessionMarkedUnread, useSessionUnread } from '@/sync/session-unread';
+import { useSessionBlockingRequests } from '@/sync/sync-context';
 import {
   findSwitcherItemAncestorIds,
   useSwitcherItems,
   type SwitcherItem,
 } from '@/components/session/sidebar/shell/useSwitcherItems';
+import { selectBlockingBadgeSessionScopes } from '@/components/session/sidebar/sessions/sessionNodeItemUtils';
 import { useUIStore } from '@/stores/useUIStore';
 import { resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
 import { formatSessionCompactDateLabel } from './sidebar/utils';
@@ -186,6 +188,13 @@ function SwitcherNode({ item, depth, variant, expandedParents, toggleParent, clo
   const session = node.session;
   const hasChildren = node.children.length > 0;
   const isExpanded = expandedParents.has(session.id);
+  // A folded row stands for its subsessions too: their waiting requests count
+  // here, exactly as the sidebar's collapsed rows count them.
+  const blockingScopes = React.useMemo(
+    () => selectBlockingBadgeSessionScopes(node, isExpanded, resolveGlobalSessionDirectory(session)),
+    [isExpanded, node, session],
+  );
+  const pendingRequests = useSessionBlockingRequests(blockingScopes);
 
   return (
     <>
@@ -196,6 +205,7 @@ function SwitcherNode({ item, depth, variant, expandedParents, toggleParent, clo
         secondaryMeta={secondaryMeta}
         hasChildren={hasChildren}
         isExpanded={isExpanded}
+        pendingRequests={pendingRequests}
         onToggleExpand={hasChildren ? () => toggleParent(session.id) : undefined}
         closeDropdown={closeDropdown}
       />
@@ -223,11 +233,12 @@ type SwitcherRowProps = {
   secondaryMeta: SecondaryMeta;
   hasChildren: boolean;
   isExpanded: boolean;
+  pendingRequests: { hasPermission: boolean; hasForm: boolean };
   onToggleExpand?: () => void;
   closeDropdown: () => void;
 };
 
-function SwitcherRow({ session, depth, variant, secondaryMeta, hasChildren, isExpanded, onToggleExpand, closeDropdown }: SwitcherRowProps): React.ReactElement {
+function SwitcherRow({ session, depth, variant, secondaryMeta, hasChildren, isExpanded, pendingRequests, onToggleExpand, closeDropdown }: SwitcherRowProps): React.ReactElement {
   const { t } = useI18n();
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
@@ -241,6 +252,12 @@ function SwitcherRow({ session, depth, variant, secondaryMeta, hasChildren, isEx
   const isStreaming = turnActivity !== null;
   const runningBlink = useWaitingBlink(isStreaming);
   const showUnreadDot = !isStreaming && isUnread && (!isActive || markedUnread);
+  const { hasPermission: hasPendingPermission, hasForm: hasPendingForm } = pendingRequests;
+  // A request waiting on the user stands for the turn: the running mark steps
+  // aside for the request badge, as it does on the sidebar and mobile rows.
+  const waitingOnUser = hasPendingPermission || hasPendingForm;
+  const permissionLabel = t('sessions.sidebar.session.status.permissionRequired');
+  const questionLabel = t('sessions.sidebar.session.status.questionPending');
 
   const timestamp = getSessionActivityTime(session) || Date.now();
   const timeLabel = formatSessionCompactDateLabel(timestamp);
@@ -332,7 +349,28 @@ function SwitcherRow({ session, depth, variant, secondaryMeta, hasChildren, isEx
         ) : null}
       </div>
 
-      {isStreaming || showUnreadDot ? (
+      {waitingOnUser ? (
+        <span className="flex flex-shrink-0 items-center gap-1 self-center">
+          {hasPendingPermission ? (
+            <span
+              className="inline-flex shrink-0 items-center text-status-warning"
+              aria-label={permissionLabel}
+              title={permissionLabel}
+            >
+              <Icon name="shield" className="h-3 w-3" />
+            </span>
+          ) : null}
+          {hasPendingForm ? (
+            <span
+              className="inline-flex shrink-0 items-center rounded border border-status-question-border bg-status-question px-1.5 text-status-question-foreground"
+              aria-label={questionLabel}
+              title={questionLabel}
+            >
+              <Icon name="question" className="h-3.5 w-3.5" />
+            </span>
+          ) : null}
+        </span>
+      ) : isStreaming || showUnreadDot ? (
         <span className="flex h-3 w-3 flex-shrink-0 items-center justify-center self-center">
           <SessionActivityIndicator
             state={turnActivity ?? 'unread'}

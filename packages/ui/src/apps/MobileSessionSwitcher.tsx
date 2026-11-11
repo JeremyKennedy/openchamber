@@ -1,12 +1,15 @@
 import React from 'react';
 import { useSessionTurnActivity } from '@/sync/global-session-status';
 import { getSessionActivityTime } from '@/sync/session-ordering';
+import { Icon } from '@/components/icon/Icon';
 import { SessionActivityIndicator } from '@/components/session/SessionActivityIndicator';
 import type { Session } from '@/lib/opencode/model';
+import type { SessionNode } from '@/components/session/sidebar/types';
 
 import { SessionActivityDuration } from '@/components/session/SessionActivityDuration';
 import { formatSessionCompactDateLabel } from '@/components/session/sidebar/utils';
 import { useSwitcherItems } from '@/components/session/sidebar/shell/useSwitcherItems';
+import { usePendingRequests } from './usePendingRequests';
 import { useTabletLayout } from '@/lib/device';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
@@ -20,6 +23,8 @@ const RECENT_SESSIONS_LIMIT = 10;
 /** Matches the metadata popover's width so both header dropdowns read as a pair. */
 const TABLET_POPOVER_WIDTH = 380;
 
+const collectDescendantIds = (node: SessionNode): string[] => node.children.flatMap((child) => [child.session.id, ...collectDescendantIds(child)]);
+
 const getSessionTitle = (session: Session, fallback: string): string =>
   session.title?.trim() || fallback;
 
@@ -27,19 +32,28 @@ const getSessionTitle = (session: Session, fallback: string): string =>
     "project · branch", compact time. Mirrors the desktop SessionSwitcherDropdown
     indicator conventions; no subsession chevrons on mobile by design. */
 const SwitcherRow: React.FC<{
-  session: Session;
+  node: SessionNode;
   meta: string;
   active: boolean;
   onSelect: () => void;
-}> = ({ session, meta, active, onSelect }) => {
+}> = ({ node, meta, active, onSelect }) => {
   const { t } = useI18n();
+  const session = node.session;
   const isUnread = useSessionUnread(session.id);
   const markedUnread = useSessionMarkedUnread(session.id);
   const turnActivity = useSessionTurnActivity(session.id);
   const isStreaming = turnActivity !== null;
   const showUnreadDot = !isStreaming && isUnread && (!active || markedUnread);
+  // The recent list shows parents only: a row stands for its subsessions too,
+  // so their waiting requests count here.
+  const familyIds = React.useMemo(() => [session.id, ...collectDescendantIds(node)], [node, session.id]);
+  const pendingRequests = usePendingRequests(familyIds);
+  const { hasPermission: hasPendingPermission, hasForm: hasPendingForm } = pendingRequests;
+  const waitingOnUser = hasPendingPermission || hasPendingForm;
+  const permissionLabel = t('sessions.sidebar.session.status.permissionRequired');
+  const questionLabel = t('sessions.sidebar.session.status.questionPending');
   const hasActivityDuration = useHasSessionTurnDuration(session.id, isStreaming);
-  const showActivityDuration = (isStreaming || showUnreadDot) && hasActivityDuration;
+  const showActivityDuration = (isStreaming || showUnreadDot) && !waitingOnUser && hasActivityDuration;
   const timeLabel = formatSessionCompactDateLabel(getSessionActivityTime(session));
 
   return (
@@ -61,7 +75,28 @@ const SwitcherRow: React.FC<{
         ) : null}
       </span>
       {/* Activity sits on the right, before the time — no reserved left gutter. */}
-      {isStreaming || showUnreadDot ? (
+      {waitingOnUser ? (
+        <span className="flex flex-shrink-0 items-center gap-1">
+          {hasPendingPermission ? (
+            <span
+              className="inline-flex shrink-0 items-center text-status-warning"
+              aria-label={permissionLabel}
+              title={permissionLabel}
+            >
+              <Icon name="shield" className="size-3" />
+            </span>
+          ) : null}
+          {hasPendingForm ? (
+            <span
+              className="inline-flex shrink-0 items-center rounded border border-status-question-border bg-status-question px-1.5 text-status-question-foreground"
+              aria-label={questionLabel}
+              title={questionLabel}
+            >
+              <Icon name="question" className="size-3.5" />
+            </span>
+          ) : null}
+        </span>
+      ) : isStreaming || showUnreadDot ? (
         <SessionActivityIndicator
           state={turnActivity ?? 'unread'}
         />
@@ -220,7 +255,7 @@ export const MobileSessionSwitcher: React.FC<{
               return (
                 <SwitcherRow
                   key={session.id}
-                  session={session}
+                  node={item.node}
                   meta={meta}
                   active={session.id === currentSessionId}
                   onSelect={() => {
