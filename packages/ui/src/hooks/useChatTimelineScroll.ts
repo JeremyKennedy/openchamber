@@ -14,6 +14,7 @@ import {
     type ViewportAnchorAlignment,
 } from '@/components/chat/lib/scroll/messageViewportAnchor';
 import { readSessionScrollPosition, rememberOutgoingSessionScrollPosition } from '@/components/chat/lib/scroll/sessionScrollMemory';
+import { REPLY_START_GAP_PX } from '@/components/chat/lib/scroll/scrollGaps';
 import {
     isWaitingPageRevealPending,
     releaseWaitingPageRevealOutside,
@@ -187,8 +188,6 @@ const REMEMBERED_POSITION_HISTORY_BATCHES = 3;
 const MESSAGE_LINK_GAP_PX = 12;
 // Matches the animation length in typography.css.
 const MESSAGE_LINK_HIGHLIGHT_MS = 1200;
-// Room left above a reply whose start the follow stopped at.
-const REPLY_START_GAP_PX = 16;
 // How long after a send growth glides before the session reports working.
 const SEND_GLIDE_WINDOW_MS = 2000;
 // How long after a turn ends its growth still follows with the follow stops.

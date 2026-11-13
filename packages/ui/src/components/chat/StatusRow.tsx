@@ -1,4 +1,5 @@
 import React from "react";
+import { cn } from "@/lib/utils";
 import { useChatSessionSelection } from './chatColumnSession';
 import { WorkingPlaceholder } from "./message/parts/WorkingPlaceholder";
 import { BackgroundWorkButton } from "./components/BackgroundWorkButton";
@@ -24,6 +25,9 @@ interface StatusRowProps {
   providerId?: string | null;
   /** Set while the turn waits on work OpenCode can move to the background. */
   onBackground?: () => void;
+  /** Drawn inside the chip ahead of the status, for an action the chip takes
+      over while it is the floating control at the live edge. */
+  leadingAction?: React.ReactNode;
 }
 
 export const StatusRow: React.FC<StatusRowProps> = ({
@@ -37,6 +41,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   modelName,
   providerId,
   onBackground,
+  leadingAction,
 }) => {
   const currentSessionId = useChatSessionSelection().sessionId;
 
@@ -55,7 +60,9 @@ export const StatusRow: React.FC<StatusRowProps> = ({
       style={STATUS_ROW_CONTAINER_STYLE}
     >
       {/* 28px, the toolbar control height, shared with the scroll-to-bottom
-          pill that takes over this label away from the live edge. */}
+          pill that takes over this label away from the live edge. min-h, not
+          h: on a phone the touch-target floor grows the arrow inside it to
+          36px, and the chip must grow with the arrow the way the pill does. */}
       {/* The chip lives here, not on the container: the root above is
           an inline-size query container, whose width ignores its children —
           a shrink-to-fit wrapper around it always collapsed to zero. */}
@@ -64,7 +71,15 @@ export const StatusRow: React.FC<StatusRowProps> = ({
           WorkingPlaceholder, so the visible marks land on the same line.
           pe-2 evens out the far side: text glyph to edge lands ~10px, the
           same optical gap as the start. */}
-      <div className="oc-surface-floating inline-flex w-max max-w-full items-center gap-2 h-7 whitespace-nowrap rounded-full [corner-shape:round] ps-1.5 pe-2">
+      <div
+        className={cn(
+          "oc-surface-floating inline-flex w-max max-w-full items-center gap-2 min-h-7 whitespace-nowrap rounded-full [corner-shape:round] pe-2",
+          // The arrow slot sits at the chip's edge the way it does in the
+          // scroll pill, so the icon lands on the same line in both.
+          leadingAction ? "ps-0" : "ps-1.5",
+        )}
+      >
+        {leadingAction}
         {/* overflow-x-clip: hiding one axis turns the other into `auto`, and a
             sub-pixel overshoot of the label (zoom, font metrics) gave the chip
             its own scrollbar. Clipping both axes cut descenders off at the

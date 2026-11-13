@@ -1849,6 +1849,7 @@ const AssistantMessageBody = React.memo(({
                                 messageId={messageId}
                                 streamPhase={effectiveStreamPhase}
                                 onShowPopup={onShowPopup}
+                                reasoning
                             />
                         );
                     } else {

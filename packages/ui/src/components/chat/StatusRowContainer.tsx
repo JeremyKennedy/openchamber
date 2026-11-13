@@ -12,7 +12,7 @@ import { StatusRow } from './StatusRow';
  * Uses the dedicated assistant status hook so the row keeps accurate live activity
  * labels while still limiting subscriptions to the active assistant message.
  */
-export const StatusRowContainer: React.FC = React.memo(() => {
+export const StatusRowContainer: React.FC<{ leadingAction?: React.ReactNode }> = React.memo(({ leadingAction }) => {
     const { activeModel, working } = useAssistantStatus();
     const currentAgentName = useConfigStore((state) => state.currentAgentName);
     const providers = useConfigStore((state) => state.providers);
@@ -47,6 +47,7 @@ export const StatusRowContainer: React.FC = React.memo(() => {
             modelName={modelDisplayName}
             providerId={activeModel?.providerId ?? null}
             onBackground={working.canBackground ? backgroundWork : undefined}
+            leadingAction={leadingAction}
         />
     );
 });

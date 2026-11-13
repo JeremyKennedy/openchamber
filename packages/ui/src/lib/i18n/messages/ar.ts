@@ -2392,6 +2392,7 @@ export const dict = {
   'chat.draftStarters.sectionPinned': 'بداياتك',
   'chat.draftStarters.moveToFront': 'نقل إلى البداية',
   'chat.scrollToBottom.aria': 'التمرير إلى الأسفل',
+  'chat.scrollToReplyStart.aria': 'التمرير إلى بداية الرد',
   'chat.promptNavigator.aria': 'التنقل بين الطلبات',
   'chat.promptNavigator.currentPrompt': 'الطلب الحالي',
   'chat.promptNavigator.loadMore': 'تحميل المزيد من الطلبات',

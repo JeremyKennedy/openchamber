@@ -29,6 +29,12 @@ interface AssistantTextPartProps {
      * several transcript rows (`timelineRows.ts`).
      */
     range?: { start: number; end?: number };
+    /**
+     * A reasoning trace drawn as plain text (`collapsibleThinkingBlocks` off).
+     * It shares this component's markup, so it marks itself to stay out of the
+     * reply-prose anchors that navigation lands on.
+     */
+    reasoning?: boolean;
 }
 
 const AssistantTextPart: React.FC<AssistantTextPartProps> = ({
@@ -37,6 +43,7 @@ const AssistantTextPart: React.FC<AssistantTextPartProps> = ({
     streamPhase,
     onShowPopup,
     range,
+    reasoning = false,
 }) => {
     // Use part directly from props — parent provides the latest version from the store.
     // No store subscription here to avoid re-render cascade from unrelated delta events.
@@ -91,6 +98,7 @@ const AssistantTextPart: React.FC<AssistantTextPartProps> = ({
         return (
             <div
                 className="group/assistant-text relative my-1 break-words"
+                data-reasoning-inline={reasoning ? 'true' : undefined}
                 key={part.id || `${messageId}-text`}
             >
                 <GeneratedJsonResultCard result={generatedResult} />
@@ -107,6 +115,7 @@ const AssistantTextPart: React.FC<AssistantTextPartProps> = ({
                 range?.start ? null : 'mt-1',
                 range?.end !== undefined ? null : 'mb-1',
             )}
+            data-reasoning-inline={reasoning ? 'true' : undefined}
             data-answer-continues={range?.start ? '' : undefined}
             // Its rows read as one text when a selection crosses them.
             data-answer-part={range ? `${messageId}:${part.id}` : undefined}

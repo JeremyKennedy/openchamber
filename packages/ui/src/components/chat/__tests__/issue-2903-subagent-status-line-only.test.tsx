@@ -253,7 +253,7 @@ describe('issue #2903 busy subagent status-line-only', () => {
     // longer lives here: the draft surface owns it since the draft transition
     // animation landed.
     expect(chatContainerSource).toContain('if (sessionMessages.length === 0 && !sessionIsWorking)');
-    expect(chatContainerSource).toContain('<StatusRowContainer />');
+    expect(chatContainerSource).toContain('<StatusRowContainer leadingAction={replyStartAction} />');
 
     const emptyIdleGuard = 'if (sessionMessages.length === 0 && !sessionIsWorking)';
     const emptyIdleReturn = chatContainerSource.indexOf(emptyIdleGuard);
@@ -262,6 +262,6 @@ describe('issue #2903 busy subagent status-line-only', () => {
       emptyIdleReturn,
       emptyIdleReturn + 1600,
     );
-    expect(emptyIdleBlock).not.toContain('<StatusRowContainer />');
+    expect(emptyIdleBlock).not.toContain('<StatusRowContainer');
   });
 });

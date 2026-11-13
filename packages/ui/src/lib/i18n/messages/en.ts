@@ -2485,6 +2485,7 @@ export const dict = {
   'chat.draftStarters.sectionPinned': 'Your starters',
   'chat.draftStarters.moveToFront': 'Move to the front',
   'chat.scrollToBottom.aria': 'Scroll to bottom',
+  'chat.scrollToReplyStart.aria': 'Scroll to start of reply',
   'chat.promptNavigator.aria': 'Prompt navigation',
   'chat.promptNavigator.currentPrompt': 'Current prompt',
   'chat.promptNavigator.loadMore': 'Load more prompts',

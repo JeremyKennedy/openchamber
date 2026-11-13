@@ -14,6 +14,7 @@ import { TurnFold, TurnPagesRow } from './components/LiveTurnActivity';
 import { useTurnFoldContexts } from './components/useTurnFold';
 import { LiveFinalActivityContext, LiveTurnHoistedPagesContext } from './components/liveActivityContext';
 import { MessageSliceContext } from './message/messageSliceContext';
+import { findReplyProseElement } from './message/replyProse';
 import { PendingWorkflowApprovals } from './workflows/PendingWorkflowApprovals';
 import { getTurnsWithLaterAssistant, uiPageMessageId } from './lib/turns/liveActivity';
 import type { ChatMessageEntry, TurnRecord, TurnGroupingContext } from './lib/turns/types';
@@ -36,6 +37,8 @@ import type { ReviewTransferDirection } from '@/lib/reviewFlow';
 import { resolveTimelineIsAtEnd } from './lib/scroll/timelineScrollAnchoring';
 import { estimateTimelineRowSize, type RowSizeMetrics } from './lib/turns/rowSizeEstimate';
 import { onNavigationRelease } from './lib/scroll/timelineScrollIntent';
+import { readStuckHeaderHeight, replyTopInset } from './lib/scroll/replyTopInset';
+import { MESSAGE_JUMP_GAP_PX } from './lib/scroll/scrollGaps';
 import { useSelectionRowHold } from './lib/scroll/selectionRowHold';
 import { isReasoningRevealTarget } from './search/reasoningReveal';
 import {
@@ -146,6 +149,14 @@ export interface MessageListHandle {
     scrollToUiPageRow: (messageId: string) => boolean;
     scrollToTurnId: (turnId: string, options?: { behavior?: ScrollBehavior }) => boolean;
     scrollToMessageId: (messageId: string, options?: { behavior?: ScrollBehavior }) => boolean;
+    // Lands on the reply's own prose rather than the step's first row: a step
+    // that opens with tool calls would otherwise put its text off screen.
+    scrollToReplyStart: (messageId: string, options?: { behavior?: ScrollBehavior }) => boolean;
+    // The nearest reply among `candidateMessageIds` (given in timeline order)
+    // whose prose starts above the visible content top (under a sticky prompt
+    // header when one covers it). A reply with no prose in its first row is
+    // not a start.
+    findPreviousReplyStart: (candidateMessageIds: readonly string[]) => string | null;
     captureViewportAnchor: () => MessageViewportAnchor | null;
     restoreViewportAnchor: (anchor: MessageViewportAnchor) => boolean;
     // One step toward showing the anchor at its offset: `moved` when the
@@ -1289,6 +1300,20 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         return container.querySelector(`[data-message-id="${messageId}"]:not([data-message-slice])`);
     }, [resolveScrollContainer]);
 
+    /**
+     * The prose a reply's start means. A message whose first row holds only
+     * tool calls or reasoning has no reply start to land on: its text sits in a
+     * later row, so it is not a target (a reader inside it gets the next older
+     * reply instead of the work that led to it).
+     */
+    const findReplyStartElement = React.useCallback((messageId: string): HTMLElement | null => {
+        const messageElement = findMessageElement(messageId);
+        if (!messageElement) {
+            return null;
+        }
+        return findReplyProseElement(messageElement);
+    }, [findMessageElement]);
+
     // A slice that no longer exists (the message is cut elsewhere now: the
     // reasoning was hidden) falls back to the message's first row, as its index does.
     const findAnchorElement = React.useCallback((anchor: MessageViewportAnchor): HTMLElement | null => (
@@ -1329,8 +1354,12 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     }, [sessionKey]);
     const settleNavigationTarget = React.useCallback((
         findElement: () => HTMLElement | null,
-        desiredOffsetTop: number,
+        desiredOffsetTop: number | (() => number),
+        options?: { throughList?: boolean; rearmOnMeasurement?: boolean },
     ) => {
+        const readDesiredOffset = typeof desiredOffsetTop === 'function'
+            ? desiredOffsetTop
+            : () => desiredOffsetTop;
         cancelNavigationRef.current?.();
         const container = resolveScrollContainer();
         if (!container || typeof window === 'undefined') {
@@ -1341,27 +1370,46 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         let cancelled = false;
         let frame: number;
         let stopReleaseListener: (() => void) | null = null;
+        let stopMeasurementListener: (() => void) | null = null;
         const cancelOnUserInput = () => {
             cancelled = true;
             window.cancelAnimationFrame(frame);
             container.removeEventListener('touchstart', cancelOnUserInput);
             container.removeEventListener('wheel', cancelOnUserInput);
             stopReleaseListener?.();
+            stopMeasurementListener?.();
             if (cancelNavigationRef.current === cancelOnUserInput) cancelNavigationRef.current = null;
         };
         cancelNavigationRef.current = cancelOnUserInput;
         container.addEventListener('touchstart', cancelOnUserInput, { passive: true });
         container.addEventListener('wheel', cancelOnUserInput, { passive: true });
         stopReleaseListener = onNavigationRelease(container, cancelOnUserInput);
+        // A row is placed at an estimate until the list measures it, and the
+        // measurement lands after the jump has aligned once. Each measurement
+        // moves the rows below it, so the target is held until the list has
+        // stopped resizing rather than until the offset first looks stable.
+        if (options?.rearmOnMeasurement) {
+            stopMeasurementListener = listRef.current?.getState().listen('totalSize', () => {
+                stable = 0;
+            }) ?? null;
+        }
         const step = () => {
             if (cancelled) return;
             const element = findElement();
             if (element) {
                 const delta = element.getBoundingClientRect().top
                     - container.getBoundingClientRect().top
-                    - desiredOffsetTop;
+                    - readDesiredOffset();
                 if (Math.abs(delta) > 0.5) {
-                    container.scrollTop += delta;
+                    const list = options?.throughList ? listRef.current : null;
+                    if (list) {
+                        // A raw scrollTop write leaves the list holding its own
+                        // pending target and it corrects back; going through the
+                        // list's offset API hands it this position instead.
+                        void list.scrollToOffset({ offset: container.scrollTop + delta, animated: false });
+                    } else {
+                        container.scrollTop += delta;
+                    }
                     stable = 0;
                 } else {
                     stable += 1;
@@ -1389,8 +1437,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
 
         const containerRect = container.getBoundingClientRect();
         const messageRect = messageElement.getBoundingClientRect();
-        const offset = 50;
-        const top = messageRect.top - containerRect.top + container.scrollTop - offset;
+        const top = messageRect.top - containerRect.top + container.scrollTop - MESSAGE_JUMP_GAP_PX;
         container.scrollTo({ top, behavior });
         return true;
     }, [findMessageElement, resolveScrollContainer]);
@@ -1485,9 +1532,143 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                 const didScroll = scrollMessageElementIntoView(messageId, behavior)
                     || scrollHistoryIndexIntoView(index);
                 if (didScroll && behavior !== 'smooth') {
-                    settleNavigationTarget(() => findMessageElement(messageId), 50);
+                    settleNavigationTarget(() => findMessageElement(messageId), MESSAGE_JUMP_GAP_PX);
                 }
                 return didScroll;
+            },
+
+            findPreviousReplyStart: (candidateMessageIds: readonly string[]) => {
+                const container = resolveScrollContainer();
+                if (!container || candidateMessageIds.length === 0) {
+                    return null;
+                }
+
+                const containerTop = container.getBoundingClientRect().top;
+                const contentTop = readStuckHeaderHeight(container);
+                // The first row of a message, by id: what a reply is measured
+                // and landed on. A slice row carries its message's id too, so
+                // it cannot be the message's start.
+                const mounted = new Map<string, HTMLElement>();
+                let boundaryIndex: number | undefined;
+                let boundaryTop = Number.NEGATIVE_INFINITY;
+                let boundaryIsSlice = false;
+                let boundaryMessageId: string | null = null;
+                for (const element of container.querySelectorAll<HTMLElement>('[data-message-id]')) {
+                    const id = element.getAttribute('data-message-id');
+                    if (!id) continue;
+                    const slice = element.hasAttribute('data-message-slice');
+                    if (!slice) mounted.set(id, element);
+                    // A pinned prompt header holds its message at the top edge
+                    // even while the reply under it extends far above. It is not
+                    // a content row, so it must not become the boundary by
+                    // position; its index still orders the replies above it.
+                    if (element.closest('[data-turn-sticky-header]')) {
+                        if (boundaryIndex === undefined) boundaryIndex = messageIndexMap.get(id);
+                        continue;
+                    }
+                    const top = element.getBoundingClientRect().top - containerTop;
+                    if (top <= contentTop && top > boundaryTop) {
+                        boundaryTop = top;
+                        boundaryIndex = messageIndexMap.get(id);
+                        boundaryIsSlice = slice;
+                        boundaryMessageId = id;
+                    }
+                }
+
+                // Only rows the list renders can be landed on; messages before
+                // the loaded window have no row and are skipped. The caller
+                // passes them in timeline order, so walking back from the
+                // newest is the nearest reply above the content top without
+                // sorting every frame.
+                for (let position = candidateMessageIds.length - 1; position >= 0; position -= 1) {
+                    const id = candidateMessageIds[position];
+                    if (!id) continue;
+                    const index = messageIndexMap.get(id);
+                    if (index === undefined) continue;
+                    const element = mounted.get(id);
+                    if (element) {
+                        // Measure the reply itself: a mounted reply below the
+                        // content top is not a target, however close its index.
+                        const start = findReplyProseElement(element);
+                        if (start && start.getBoundingClientRect().top - containerTop < contentTop) {
+                            return id;
+                        }
+                        continue;
+                    }
+                    // The first row is virtualized out while the reader is
+                    // inside the reply: its mounted slice rows sit at the
+                    // content top, so the reply is above the viewport and its
+                    // start is a valid target.
+                    if (boundaryMessageId === id && boundaryIsSlice) {
+                        return id;
+                    }
+                    // Unmounted but older than the row at the content top: the
+                    // whole reply is above the viewport.
+                    if (boundaryIndex !== undefined && index < boundaryIndex) {
+                        return id;
+                    }
+                }
+                return null;
+            },
+
+            scrollToReplyStart: (messageId: string, options?: { behavior?: ScrollBehavior }) => {
+                cancelNavigationRef.current?.();
+                const behavior = options?.behavior ?? 'auto';
+                const container = resolveScrollContainer();
+                if (!container) {
+                    return false;
+                }
+
+                // A reply the fold already draws needs no reveal: opening the
+                // turn would expand a live turn's Activity for good.
+                let element = findReplyStartElement(messageId);
+                if (!element) {
+                    revealFoldedMessage(messageId);
+                    element = findReplyStartElement(messageId);
+                }
+                const readInset = () => {
+                    const start = findReplyStartElement(messageId);
+                    return start ? replyTopInset(container, start) : MESSAGE_JUMP_GAP_PX;
+                };
+                if (element) {
+                    const inset = replyTopInset(container, element);
+                    const containerRect = container.getBoundingClientRect();
+                    const elementRect = element.getBoundingClientRect();
+                    const top = elementRect.top - containerRect.top + container.scrollTop - inset;
+                    const list = listRef.current;
+                    if (list && behavior !== 'smooth') {
+                        // The list owns the scroll position: a raw scrollTop
+                        // write is undone by its pending index target, leaving
+                        // the prose short of the inset.
+                        void list.scrollToOffset({ offset: Math.max(0, top), animated: false });
+                    } else {
+                        container.scrollTo({ top, behavior });
+                    }
+                    if (behavior !== 'smooth') {
+                        settleNavigationTarget(
+                            () => findReplyStartElement(messageId),
+                            readInset,
+                            { throughList: true, rearmOnMeasurement: true },
+                        );
+                    }
+                    return true;
+                }
+
+                const index = messageIndexMap.get(messageId);
+                if (index === undefined || !scrollHistoryIndexIntoView(index)) {
+                    return false;
+                }
+                if (behavior !== 'smooth') {
+                    // The target row and its sticky header mount during the
+                    // settle, so the inset is read as they appear. The list's
+                    // measurement of the rows it just placed re-aims it too.
+                    settleNavigationTarget(
+                        () => findReplyStartElement(messageId),
+                        readInset,
+                        { throughList: true, rearmOnMeasurement: true },
+                    );
+                }
+                return true;
             },
 
             holdViewportAnchor: (anchor) => {
@@ -1533,7 +1714,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         return () => {
             if (objectRef.current === handle) objectRef.current = null;
         };
-    }, [alignViewportAnchor, findAnchorElement, findMessageElement, messageIndexMap, resolveScrollContainer, revealFoldedMessage, rowIndexByKey, scrollHistoryIndexIntoView, scrollMessageElementIntoView, settleNavigationTarget, turnIndexMap, ref]);
+    }, [alignViewportAnchor, findAnchorElement, findMessageElement, findReplyStartElement, messageIndexMap, resolveScrollContainer, revealFoldedMessage, rowIndexByKey, scrollHistoryIndexIntoView, scrollMessageElementIntoView, settleNavigationTarget, turnIndexMap, ref]);
 
     const rowContext = React.useMemo(() => ({
         scrollToBottom: stableScrollToBottom,

@@ -63,7 +63,7 @@ import {
     withdrawComposerInsets,
 } from '@/components/chat/composer/state/composerInsetReaders';
 import { SessionErrorNotice } from '@/components/chat/SessionErrorNotice';
-import ScrollToBottomButton from './components/ScrollToBottomButton';
+import ScrollToBottomButton, { ScrollToReplyStartAction } from './components/ScrollToBottomButton';
 import { PromptNavigatorRail } from './components/PromptNavigatorRail';
 import { useAuthSessionStore } from '@/lib/runtime-auth-expiry';
 import { useScrollShadow } from '@/components/ui/useScrollShadow';
@@ -74,6 +74,8 @@ import { useChatTurnNavigation } from './hooks/useChatTurnNavigation';
 import { ChatQuoteHighlightContext, useChatQuoteHighlightStore } from './hooks/chatQuoteHighlightStore';
 import { ChatQuoteHighlightLayer } from './message/ChatQuoteHighlightLayer';
 import { TextSelectionMenu } from './message/TextSelectionMenu';
+import { deriveMessageRole } from './message/messageRole';
+import { isEmptyTextPart } from './message/partUtils';
 import { loadQuoteSource as loadQuoteSourceMessage, scrollToQuoteSource as scrollToQuoteSourceMessage } from './quoteNavigation';
 import { useChatSurfaceMode } from './useChatSurfaceMode';
 import { useMessageTTS } from '@/hooks/useMessageTTS';
@@ -1566,6 +1568,68 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
         });
     }, [checkLinkedMessage, controllerLoadHistoryUntilMessage, currentSessionKey, handleLinkedMessageMissing, onManualNavigation]);
     const scrollToTimelineMessage = timelineController.scrollToMessage;
+    // Replies in the rendered window: the pill's up arrow walks back to the
+    // nearest one whose prose start sits above the viewport. Steps that only
+    // ran tools are not replies a reader wants to land on.
+    const replyStartMessageIds = React.useMemo(() => {
+        const records = timelineController.renderedMessages;
+        const ids: string[] = [];
+        for (const record of records) {
+            if (!record || deriveMessageRole(record.info).role !== 'assistant') {
+                continue;
+            }
+            if (!record.parts.some((part) => part.type === 'text' && !isEmptyTextPart(part))) {
+                continue;
+            }
+            ids.push(record.info.id);
+        }
+        return ids;
+    }, [timelineController.renderedMessages]);
+    // The nearest reply start above the visible content top. Measured on
+    // scroll and on every layout change that does not scroll (a sticky-header
+    // toggle, a resize, a row measured), so the arrow points at what is on
+    // screen, and resolved again at click time: after the list replaces its
+    // row estimates the cached id is a frame behind.
+    const [replyJumpTargetId, setReplyJumpTargetId] = React.useState<string | null>(null);
+    const replyJumpScheduleRef = React.useRef<(() => void) | null>(null);
+    React.useEffect(() => {
+        if (!scrollNode || replyStartMessageIds.length === 0) {
+            setReplyJumpTargetId(null);
+            return;
+        }
+        let frame = 0;
+        const measure = () => {
+            frame = 0;
+            const target = messageListRef.current?.findPreviousReplyStart(replyStartMessageIds) ?? null;
+            setReplyJumpTargetId((current) => (current === target ? current : target));
+        };
+        const schedule = () => {
+            if (frame) {
+                return;
+            }
+            frame = window.requestAnimationFrame(measure);
+        };
+        replyJumpScheduleRef.current = schedule;
+        measure();
+        scrollNode.addEventListener('scroll', schedule, { passive: true });
+        const resizeObserver = globalThis.ResizeObserver
+            ? new globalThis.ResizeObserver(schedule)
+            : null;
+        resizeObserver?.observe(scrollNode);
+        return () => {
+            window.cancelAnimationFrame(frame);
+            scrollNode.removeEventListener('scroll', schedule);
+            resizeObserver?.disconnect();
+            if (replyJumpScheduleRef.current === schedule) replyJumpScheduleRef.current = null;
+        };
+    }, [scrollNode, replyStartMessageIds, stickyUserHeader]);
+    const remeasureReplyJumpOnListMetrics = React.useCallback(
+        (metrics: { readonly headerSize: number; readonly footerSize: number }) => {
+            replyJumpScheduleRef.current?.();
+            onListMetricsChange(metrics);
+        },
+        [onListMetricsChange],
+    );
     const scrollToQuoteSource = React.useCallback(async (
         messageId: string,
         options?: { behavior?: ScrollBehavior },
@@ -1584,6 +1648,39 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
     const scrollToUiPageRow = React.useCallback((messageId: string) => (
         messageListRef.current?.scrollToUiPageRow(messageId) ?? false
     ), []);
+    const scrollToPreviousReplyStart = React.useCallback(() => {
+        // Resolved here, not read from state: the cached id is measured on a
+        // frame the list may have moved since (it replaces row estimates as
+        // rows mount), and a stale id sends the reader to an older reply. The
+        // cached id is only the fallback for a list that cannot answer at all.
+        const list = messageListRef.current;
+        const target = list ? list.findPreviousReplyStart(replyStartMessageIds) : replyJumpTargetId;
+        if (!target) {
+            return;
+        }
+        // Instant, like the prompt navigator: a long smooth scroll through a
+        // virtualized timeline is cancelled by row remounts and lands mid-way.
+        // The jump releases live follow like a gesture, then the aligner puts
+        // the prose itself under the top edge, past the tool rows.
+        onManualNavigation();
+        list?.scrollToReplyStart(target, { behavior: 'auto' });
+    }, [onManualNavigation, replyJumpTargetId, replyStartMessageIds]);
+
+    // One arrow at a time. At the live edge the status chip sits over the pill,
+    // so while it draws a label the chip carries the arrow; away from the edge
+    // the chip fades and the pill owns both arrows. The two gates are
+    // exclusive on `showScrollToBottom`, and the faded chip never holds a
+    // focusable, invisible arrow.
+    const replyStartInChip = Boolean(replyJumpTargetId)
+        && sessionIsWorking
+        && !timelineController.showScrollToBottom
+        && !userOwnsScroll;
+    const replyStartInPill = Boolean(replyJumpTargetId) && timelineController.showScrollToBottom;
+    const replyStartAction = React.useMemo(() => (
+        replyStartInChip
+            ? <ScrollToReplyStartAction onClick={scrollToPreviousReplyStart} />
+            : undefined
+    ), [replyStartInChip, scrollToPreviousReplyStart]);
 
     const navigation = useChatTurnNavigation({
         sessionId: currentSessionId,
@@ -1957,7 +2054,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
             registerList={registerList}
             captureOutgoingPosition={captureOutgoingPosition}
             onIsAtEndChange={onIsAtEndChange}
-            onListMetricsChange={onListMetricsChange}
+            onListMetricsChange={remeasureReplyJumpOnListMetrics}
             onTimelineDataChange={onTimelineDataChange}
             messageListRef={messageListRef}
             renderedMessages={timelineController.renderedMessages}
@@ -2062,8 +2159,14 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
                        when the slot resizes (see mobileComposerMorph). */
                     <div className="oc-composer-riders absolute bottom-full inset-x-0" data-composer-riders="true">
                         <ScrollToBottomButton
+                            // The pill only ever draws while it is away from the
+                            // live edge: at the edge the chip carries the arrow,
+                            // and an arrow there painted over the transcript
+                            // whenever a dock raised the composer band.
                             visible={timelineController.showScrollToBottom}
+                            awayFromLiveEdge={timelineController.showScrollToBottom}
                             working={sessionIsWorking}
+                            onScrollToReplyStart={replyStartInPill ? scrollToPreviousReplyStart : undefined}
                             onClick={navigation.resumeToLatest}
                         />
                         {/* Same anchor and column as the pill, so the status
@@ -2088,7 +2191,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
                                         userOwnsScroll ? 'pointer-events-none' : 'pointer-events-auto',
                                     )}
                                 >
-                                    <StatusRowContainer />
+                                    <StatusRowContainer leadingAction={replyStartAction} />
                                 </div>
                             </div>
                         </div>

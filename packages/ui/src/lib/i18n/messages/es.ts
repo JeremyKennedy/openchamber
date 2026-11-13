@@ -2453,6 +2453,7 @@ export const dict: Record<I18nKey, string> = {
   "chat.draftStarters.sectionPinned": "Tus iniciadores",
   "chat.draftStarters.moveToFront": "Mover al principio",
   "chat.scrollToBottom.aria": "Ir al final",
+  "chat.scrollToReplyStart.aria": "Ir al inicio de la respuesta",
   "chat.promptNavigator.aria": "Navegación de prompts",
   "chat.promptNavigator.currentPrompt": "Prompt actual",
   "chat.promptNavigator.loadMore": "Cargar más prompts",
