@@ -53,6 +53,12 @@ export type State = {
   permission: Record<string, PermissionRequest[]>
   /** Pending forms (the agent asking the user for input), keyed by session. */
   form: Record<string, FormRequest[]>
+  /**
+   * Both pending-request snapshots (permissions and forms) committed at least
+   * once. Row badges trust this store's buckets only then; a config or location
+   * read that failed leaves it false rather than deciding the question.
+   */
+  pendingRequestsReady?: boolean
   vcs: Vcs | undefined
   limit: number
   message: Record<string, Message[]>

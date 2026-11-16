@@ -1,27 +1,27 @@
 import React from 'react';
 
-import { useGlobalBlockingRequestsStore } from '@/sync/global-blocking-requests';
+import type { SessionNode } from '@/components/session/sidebar/types';
+import { selectBlockingBadgeSessionScopes } from '@/components/session/sidebar/sessions/sessionNodeItemUtils';
+import { useSessionBlockingRequests } from '@/sync/sync-context';
+import type { BlockingRequestKinds } from '@/sync/global-blocking-requests';
 
-export type PendingRequests = { hasPermission: boolean; hasForm: boolean };
+export type PendingRequests = BlockingRequestKinds;
 
 /**
- * Whether a permission request or a form waits for a row. The answer comes
- * from the cross-directory request index, so a project the phone never opened
- * still shows them. `sessionIds` is the row's own session plus any subsessions
- * it hides: a subagent's request blocks the whole family.
+ * Whether a permission request or a form waits for a phone row. It resolves a
+ * session's directory exactly as the desktop row does — the same scope helper,
+ * the row's own session and worktree included — so both surfaces show the same
+ * badge for the same session. A scope whose directory is null has no store to
+ * answer for it, and the cross-directory index answers there instead.
  */
-export const usePendingRequests = (sessionIds: readonly string[]): PendingRequests => {
-  const hasPermission = useGlobalBlockingRequestsStore(React.useCallback(
-    (state) => sessionIds.some((id) => Boolean(state.bySession.get(id)?.permissions.length)),
-    [sessionIds],
-  ));
-  const hasForm = useGlobalBlockingRequestsStore(React.useCallback(
-    // A page that waits for the user's answer counts as a form.
-    (state) => sessionIds.some((id) => {
-      const pending = state.bySession.get(id);
-      return Boolean(pending?.forms.length || pending?.pages.length);
-    }),
-    [sessionIds],
-  ));
-  return { hasPermission, hasForm };
+export const usePendingRequests = (
+  node: SessionNode,
+  isExpanded: boolean,
+  fallbackDirectory: string | null,
+): PendingRequests => {
+  const scopes = React.useMemo(
+    () => selectBlockingBadgeSessionScopes(node, isExpanded, fallbackDirectory),
+    [fallbackDirectory, isExpanded, node],
+  );
+  return useSessionBlockingRequests(scopes);
 };

@@ -137,6 +137,18 @@ async function initializeDirectory(input: DirectoryBootstrapInput, sessions: Pro
   commit({ status: "partial" })
   if (input.isStale?.()) return "stale"
 
+  // Row badges trust this store's permission and form buckets only once both
+  // request snapshots have committed. A flag of their own keeps that question
+  // away from the unrelated critical reads: a project whose config read fails
+  // is a supported state, and it must still answer for its own requests. The
+  // flag is never cleared afterwards, so a failed re-bootstrap keeps the
+  // snapshot it already committed instead of falling back to the index.
+  let committedRequestSnapshots = 0
+  const noteRequestSnapshotCommitted = (): void => {
+    committedRequestSnapshots += 1
+    if (committedRequestSnapshots === 2) commit({ pendingRequestsReady: true })
+  }
+
   // Queue live recovery first. Each read commits independently and a failing
   // config read cannot suppress pending form or permission recovery.
   const critical = Promise.allSettled([
@@ -158,13 +170,15 @@ async function initializeDirectory(input: DirectoryBootstrapInput, sessions: Pro
       const form = await readDirectoryFormSnapshot(store, () => (
         opencodeClient.listPendingForms({ directories: [directory] })
       ))
-      if (commit({ form })) noteQuestionFormSnapshot(directory, Object.values(form).flat())
+      if (!commit({ form })) return
+      noteQuestionFormSnapshot(directory, Object.values(form).flat())
+      noteRequestSnapshotCommitted()
     }),
     read(async () => {
       const permission = await readDirectoryPermissionSnapshot(store, () => (
         opencodeClient.listPendingPermissions({ directories: [directory] })
       ))
-      commit({ permission })
+      if (commit({ permission })) noteRequestSnapshotCommitted()
     }),
     read(() => opencodeClient.getConfig(directory).then((config) => {
       if (commit({ config })) emitSyncConfigChanged(directory, config)

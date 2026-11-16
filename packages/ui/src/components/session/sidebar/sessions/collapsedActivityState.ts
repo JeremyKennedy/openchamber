@@ -1,13 +1,14 @@
 import React from 'react';
 import type { SessionNode } from '../types';
 import { useGlobalSessionStatusStore } from '@/sync/global-session-status';
-import { useGlobalBlockingRequestsStore } from '@/sync/global-blocking-requests';
 import { useBackgroundShellsStore } from '@/sync/background-shells';
 import { useBackgroundImagesStore } from '@/sync/background-images';
 import { usePrWatchStore } from '@/sync/pr-watch';
 import { useExtensionWaitsStore } from '@/sync/extension-waits';
-import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
+import { resolveGlobalSessionDirectory, useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { isSessionUnread } from '@/sync/session-unread';
+import { useSessionBlockingRequests } from '@/sync/sync-context';
+import { selectBlockingBadgeSessionScopes } from './sessionNodeItemUtils';
 
 // Ordered by how much the user is needed: a blocked turn outranks a running
 // one, which outranks something merely unread.
@@ -90,6 +91,19 @@ export const useCollapsedSessionActivityState = ({
     () => (blockingSessionIds && blockingSessionIds.length > 0 ? new Set([...ids.active, ...blockingSessionIds]) : ids.active),
     [blockingSessionIds, ids.active],
   );
+  // Where each counted session lives, as JSON: the subscription follows the
+  // resolved directories instead of the session map identity, so a change to an
+  // unrelated session does not rebuild the scopes of a collapsed header, and a
+  // directory containing any separator still encodes unambiguously.
+  const blockingDirectorySignature = useGlobalSessionsStore(React.useCallback((state) => {
+    if (!enabled || blockingIds.size === 0) return '';
+    const entries: [string, string][] = [];
+    for (const sessionId of blockingIds) {
+      const session = state.entityById.get(sessionId);
+      entries.push([sessionId, session ? resolveGlobalSessionDirectory(session) ?? '' : '']);
+    }
+    return JSON.stringify(entries);
+  }, [blockingIds, enabled]));
   const active = useGlobalSessionStatusStore(React.useCallback((state): CollapsedActivityState => {
     if (!enabled) return null;
     for (const sessionId of ids.active) {
@@ -137,21 +151,53 @@ export const useCollapsedSessionActivityState = ({
     }
     return null;
   }, [enabled, ids.unread]));
-  // Pending requests come from the cross-directory index, which every
-  // directory feeds live and the host seeds, so a collapsed group in a project
-  // that was never opened still shows the request. Subtasks count too: a
-  // permission asked by a subagent blocks the whole family.
-  const blocked = useGlobalBlockingRequestsStore(React.useCallback((state): CollapsedActivityState => {
-    if (!enabled) return null;
-    let result: CollapsedActivityState = null;
-    for (const sessionId of blockingIds) {
-      const pending = state.bySession.get(sessionId);
-      if (!pending) continue;
-      if (pending.permissions.length > 0) return 'permission';
-      // A page that waits for the user's answer blocks the agent like a form.
-      if (pending.forms.length > 0 || pending.pages.length > 0) result = 'form';
+  // Pending requests come from the directory store once it has read its own
+  // request snapshots, and from the cross-directory index before that, exactly
+  // as a session row counts them: a collapsed group in a project that was
+  // never opened still shows a seeded request, while a form the index kept
+  // after a lost settlement stops showing once its store is authoritative.
+  // Subtasks count too: a permission asked by a subagent blocks the whole
+  // family.
+  const scopes = React.useMemo(() => {
+    // Nothing counted, or nothing to resolve: the signature also tells the memo
+    // when a counted session's directory becomes known, since the helper below
+    // reads that resolution from the store.
+    if (!enabled || blockingDirectorySignature === '') return [];
+    const sessionIDsByDirectory = new Map<string, string[]>();
+    const unplacedSessionIDs: string[] = [];
+    const add = (directory: string | null, sessionID: string) => {
+      // A session with no known directory has no store to answer for it, so the
+      // lookup reads the index for it instead.
+      if (!directory) {
+        unplacedSessionIDs.push(sessionID);
+        return;
+      }
+      const sessionIDs = sessionIDsByDirectory.get(directory) ?? [];
+      sessionIDs.push(sessionID);
+      sessionIDsByDirectory.set(directory, sessionIDs);
+    };
+    for (const node of nodes) {
+      // Every session under a collapsed header is hidden, so all of them count.
+      for (const scope of selectBlockingBadgeSessionScopes(node, false, null)) {
+        for (const sessionID of scope.sessionIDs) add(scope.directory, sessionID);
+      }
     }
-    return result;
-  }, [enabled, blockingIds]));
+    for (const sessionID of blockingSessionIds ?? []) {
+      const session = useGlobalSessionsStore.getState().entityById.get(sessionID);
+      add(session ? resolveGlobalSessionDirectory(session) : null, sessionID);
+    }
+    const scopes: { directory: string | null; sessionIDs: string[] }[] = [...sessionIDsByDirectory]
+      .map(([directory, sessionIDs]) => ({ directory, sessionIDs }));
+    if (unplacedSessionIDs.length > 0) scopes.push({ directory: null, sessionIDs: unplacedSessionIDs });
+    return scopes;
+  }, [blockingDirectorySignature, blockingSessionIds, enabled, nodes]);
+  const scopedRequests = useSessionBlockingRequests(scopes);
+  const blocked: CollapsedActivityState = !enabled
+    ? null
+    : scopedRequests.hasPermission
+      ? 'permission'
+      : scopedRequests.hasForm
+        ? 'form'
+        : null;
   return blocked ?? active ?? waitingOnShell ?? waitingOnImage ?? waitingOnPullRequest ?? waitingOnExtension ?? unread;
 };

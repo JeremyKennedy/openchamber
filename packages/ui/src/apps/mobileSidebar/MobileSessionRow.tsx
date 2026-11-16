@@ -20,7 +20,6 @@ import { normalizePath } from '@/lib/pathNormalization';
 import { MobileGuestMarks } from './MobileGuestMarks';
 import { refTintStyle } from '@/lib/source-control/prVisualState';
 import { isMultiLineTimelineContext, isPinnedZoneRowKey, sessionExpansionKey, type SessionSidebarRow } from '@/components/session/sidebar/sessionSidebarRowModel';
-import type { SessionNode } from '@/components/session/sidebar/types';
 import { isChatDirectoryPath } from '@/lib/chatDirectories';
 import { useI18n } from '@/lib/i18n';
 import { isSessionPinned } from '@/lib/sessionPins';
@@ -49,8 +48,6 @@ import { MobileRowMenu } from './MobileRowMenu';
 import { MOBILE_ACTIVE_ROW_CLASS, MobileRowChevron, MobileSlotChevron, MobileTwoLineLayout } from './mobileRowParts';
 
 type SessionRowModel = Extract<SessionSidebarRow, { kind: 'session' }>;
-
-const collectDescendantIds = (node: SessionNode): string[] => node.children.flatMap((child) => [child.session.id, ...collectDescendantIds(child)]);
 
 /**
  * A session in the phone's list: the desktop row's content for a thumb. One
@@ -85,12 +82,11 @@ export const MobileSessionRow: React.FC<{
   const showActivityDuration = (isStreaming || showUnread) && hasActivityDuration;
   const hasChildren = node.children.length > 0;
   const expanded = row.expanded === true;
-  // A folded row stands for its subsessions too: their waiting requests count here.
-  const familyIds = React.useMemo(
-    () => (hasChildren && !expanded ? [session.id, ...collectDescendantIds(node)] : [session.id]),
-    [expanded, hasChildren, node, session.id],
-  );
-  const pendingRequests = usePendingRequests(familyIds);
+  // A folded row stands for its subsessions too: their waiting requests count
+  // here. Its directory resolves as the desktop row's does, so a store that has
+  // read its requests answers instead of the additive index, and the index
+  // answers only for a session with no known directory.
+  const pendingRequests = usePendingRequests(node, expanded, directory || null);
   const topLevel = !session.parentID;
   const sessionWorkEnabled = useUIStore((state) => state.sessionWorkEnabled);
   // Only a work's own row tracks it, for every session of it: what nests in

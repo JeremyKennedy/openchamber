@@ -38,8 +38,46 @@ type PendingBlockingRequests = {
   pages: readonly BlockingPageRequest[];
 };
 
-type GlobalBlockingRequestsState = {
+export type GlobalBlockingRequestsState = {
   bySession: ReadonlyMap<string, PendingBlockingRequests>;
+};
+
+/**
+ * Whether a permission or a form waits for a session: the reduction every
+ * badge consumer needs. Pages count as forms, since they block the agent the
+ * same way and have no store bucket of their own.
+ */
+export type BlockingRequestKinds = { hasPermission: boolean; hasForm: boolean };
+
+// Stable snapshots: a fresh object per read would re-render every subscribed
+// row on every index write.
+const NOTHING_PENDING: BlockingRequestKinds = { hasPermission: false, hasForm: false };
+const PERMISSION_PENDING: BlockingRequestKinds = { hasPermission: true, hasForm: false };
+const FORM_PENDING: BlockingRequestKinds = { hasPermission: false, hasForm: true };
+const PERMISSION_AND_FORM_PENDING: BlockingRequestKinds = { hasPermission: true, hasForm: true };
+
+/**
+ * Whether any of `sessionIDs` has a request in the index. It is the one copy of
+ * that scan: a directory store's own buckets answer for its sessions once its
+ * request snapshots are ready, and this is what remains for sessions no store
+ * can speak for, a store that has not read them yet, and the surfaces that
+ * never mount a row. Returns a shared object, so a selector built on it keeps
+ * its identity while the answer stands.
+ */
+export const selectIndexedBlockingRequests = (
+  bySession: GlobalBlockingRequestsState['bySession'],
+  sessionIDs: Iterable<string>,
+): BlockingRequestKinds => {
+  let hasPermission = false;
+  let hasForm = false;
+  for (const sessionID of sessionIDs) {
+    const pending = bySession.get(sessionID);
+    if (!pending) continue;
+    hasPermission ||= pending.permissions.length > 0;
+    hasForm ||= pending.forms.length > 0 || pending.pages.length > 0;
+  }
+  if (hasPermission) return hasForm ? PERMISSION_AND_FORM_PENDING : PERMISSION_PENDING;
+  return hasForm ? FORM_PENDING : NOTHING_PENDING;
 };
 
 const EMPTY: readonly never[] = [];
@@ -214,6 +252,28 @@ export const applyGlobalBlockingRequestEvents = (rawDirectory: string, payloads:
     }
   }
 
+  reducer.publish();
+};
+
+/**
+ * Drops one request the client has already settled locally from the index.
+ *
+ * The index is otherwise written only by lifecycle events and the host seed,
+ * so a store clear on a successful reply (or a reply the server reported as not
+ * found) leaves its entry behind until a settlement event the gap may have
+ * lost. Surfaces that read only the index — the tray's approval list, the
+ * phone's attention bell, the sidebar's "In work" facts and the overviews —
+ * then keep offering a request no row shows. Every consumer reads one answer
+ * once the local clear settles the index too.
+ */
+export const settleGlobalBlockingRequest = (
+  kind: 'permission' | 'form',
+  sessionID: string,
+  requestID: string,
+): void => {
+  if (!sessionID || !requestID) return;
+  const reducer = new Reducer(useGlobalBlockingRequestsStore.getState());
+  reducer.settle(kind === 'permission' ? 'permissions' : 'forms', sessionID, requestID);
   reducer.publish();
 };
 

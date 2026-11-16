@@ -113,7 +113,7 @@ import {
   useGlobalSessionStatusStore,
   watchGlobalSessionStatusWrites,
 } from "./global-session-status"
-import { applyGlobalBlockingRequestEvents, applyWaitingPageEvent, settledPageKeys, useGlobalBlockingRequestsStore } from "./global-blocking-requests"
+import { applyGlobalBlockingRequestEvents, applyWaitingPageEvent, selectIndexedBlockingRequests, settledPageKeys, useGlobalBlockingRequestsStore, type BlockingRequestKinds } from "./global-blocking-requests"
 import { requestHostTurnStarts } from "./host-session-status-seed"
 import { setHostTurnStartRequester } from "./session-activity-timing"
 import { applyBackgroundShellEvents, directoriesWithRunningShells, refreshBackgroundShells } from "./background-shells"
@@ -4083,12 +4083,15 @@ export function useSessionPermissions(sessionID: string, directory?: string, opt
   return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 
-type SessionBlockingRequests = {
-  hasPermission: boolean
-  hasForm: boolean
+/** Get pending forms for a specific session */
+export function useSessionForms(sessionID: string, directory?: string) {
+  return useDirectorySync(
+    useCallback((state: State) => state.form[sessionID] ?? EMPTY_FORM_REQUESTS, [sessionID]),
+    directory,
+  )
 }
 
-const NO_SESSION_BLOCKING_REQUESTS: SessionBlockingRequests = {
+const NO_SESSION_BLOCKING_REQUESTS: BlockingRequestKinds = {
   hasPermission: false,
   hasForm: false,
 }
@@ -4097,45 +4100,61 @@ const NO_SESSION_BLOCKING_REQUESTS: SessionBlockingRequests = {
  * Whether any pending permission or form waits in exact session buckets
  * grouped by owning directory. This lets collapsed rows cover hidden
  * descendants without bootstrapping their stores or subscribing to unrelated
- * updates.
+ * updates. A scope whose `directory` is null holds sessions this client cannot
+ * place: no store can answer for those, so the index is their only source.
  */
 export function useSessionBlockingRequests(
-  scopes: readonly { directory: string; sessionIDs: readonly string[] }[],
-): SessionBlockingRequests {
+  scopes: readonly { directory: string | null; sessionIDs: readonly string[] }[],
+): BlockingRequestKinds {
   // Runtime only: the current directory is not an input here, and reading the
   // directory-bearing context would re-render every sidebar row that shows
   // blocking requests whenever the user switches projects.
   const { childStores } = useSyncRuntime()
-  const scopedStores = React.useMemo(() => scopes.map((scope) => ({
-    sessionIDs: scope.sessionIDs,
-    store: childStores.ensureChild(scope.directory, { bootstrap: false }),
-  })), [childStores, scopes])
+  // A row asks about directories it has not opened, and consulting a store
+  // must not create one: a store nobody opened has no snapshot to be
+  // authoritative about, and creating one here would seed and pin a store for
+  // every directory a row or a collapsed header mentions.
   React.useEffect(() => {
-    for (const scope of scopes) childStores.pin(scope.directory)
+    const directories = scopes.flatMap((scope) => (
+      scope.directory && childStores.getChild(scope.directory) ? [scope.directory] : []
+    ))
+    for (const directory of directories) childStores.pin(directory)
     return () => {
-      for (const scope of scopes) childStores.unpin(scope.directory)
+      for (const directory of directories) childStores.unpin(directory)
     }
   }, [childStores, scopes])
   const snapshotRef = useRef(NO_SESSION_BLOCKING_REQUESTS)
   const getSnapshot = React.useCallback(() => {
     let hasPermission = false
     let hasForm = false
-    // Pages that wait for the user's answer are only in the cross-directory
-    // index; they count as a form. A store this client never bootstrapped
-    // knows only live forms, so until its bootstrap completes, forms come
+    // A store this client never bootstrapped knows only live requests, so
+    // until its own request snapshots are ready, permissions and forms come
     // from the index too, which the host seed fills with the ones already
-    // waiting at load. A complete store is authoritative: its reply and
-    // reconnect paths clear forms the index can keep after a lost event.
+    // waiting at load. Once they are ready, the store alone answers, since its
+    // reply and reconnect paths clear requests the index can keep after a lost
+    // event.
     const indexed = useGlobalBlockingRequestsStore.getState().bySession
-    for (const { sessionIDs, store } of scopedStores) {
-      const { permission: permissions, form: forms, status } = store.getState()
-      const formsAuthoritative = status === "complete"
+    for (const { directory, sessionIDs } of scopes) {
+      const store = directory ? childStores.getChild(directory) : undefined
+      if (!store) {
+        // No known directory, or no store for it: the index is all there is.
+        const pending = selectIndexedBlockingRequests(indexed, sessionIDs)
+        hasPermission ||= pending.hasPermission
+        hasForm ||= pending.hasForm
+        continue
+      }
+      const { permission: permissions, form: forms, pendingRequestsReady } = store.getState()
       for (const sessionID of sessionIDs) {
-        const pending = indexed.get(sessionID)
         hasPermission ||= Boolean(permissions[sessionID]?.length)
         hasForm ||= Boolean(forms[sessionID]?.length)
-          || Boolean(pending?.pages.length)
-          || (!formsAuthoritative && Boolean(pending?.forms.length))
+          // Pages that wait for the user's answer have no store bucket, so the
+          // index answers for them whatever the store's readiness.
+          || Boolean(indexed.get(sessionID)?.pages.length)
+      }
+      if (!pendingRequestsReady) {
+        const pending = selectIndexedBlockingRequests(indexed, sessionIDs)
+        hasPermission ||= pending.hasPermission
+        hasForm ||= pending.hasForm
       }
     }
     const previous = snapshotRef.current
@@ -4145,22 +4164,61 @@ export function useSessionBlockingRequests(
     const next = { hasPermission, hasForm }
     snapshotRef.current = next
     return next
-  }, [scopedStores])
+  }, [childStores, scopes])
   const subscribe = React.useCallback((notify: () => void) => {
-    const unsubscribers = [
-      ...scopedStores.flatMap(({ sessionIDs, store }) => [
-        subscribeDirectoryPermissions(store, sessionIDs, notify),
-        // Also fires when the store's bootstrap status changes, which
-        // switches the source of its forms (see getSnapshot).
-        subscribeDirectoryForms(store, sessionIDs, notify),
-      ]),
-      // Rare writes; getSnapshot keeps the same object when nothing changed.
-      useGlobalBlockingRequestsStore.subscribe(notify),
-    ]
-    return () => {
-      for (const unsubscribe of unsubscribers) unsubscribe()
+    const storeUnsubscribers = new Map<string, () => void>()
+    let queued = false
+    let active = true
+    // A store can appear for a directory this row already asked about, after
+    // another surface opened it, and the source switches then. The registry
+    // fires from that surface's render, so the announcement waits a microtask.
+    const announce = () => {
+      if (queued) return
+      queued = true
+      queueMicrotask(() => {
+        queued = false
+        if (active) notify()
+      })
     }
-  }, [scopedStores])
+    const syncStoreSubscriptions = () => {
+      const directories = new Set(scopes.flatMap((scope) => (scope.directory ? [scope.directory] : [])))
+      for (const [directory, unsubscribe] of storeUnsubscribers) {
+        if (directories.has(directory)) continue
+        unsubscribe()
+        storeUnsubscribers.delete(directory)
+      }
+      for (const scope of scopes) {
+        const { directory } = scope
+        if (!directory || storeUnsubscribers.has(directory)) continue
+        const store = childStores.getChild(directory)
+        if (!store) continue
+        const unsubscribers = [
+          subscribeDirectoryPermissions(store, scope.sessionIDs, notify),
+          // Also fires when the store's request snapshots become ready or its
+          // bootstrap status changes, which switches the source of its forms
+          // (see getSnapshot).
+          subscribeDirectoryForms(store, scope.sessionIDs, notify),
+        ]
+        storeUnsubscribers.set(directory, () => {
+          for (const unsubscribe of unsubscribers) unsubscribe()
+        })
+      }
+    }
+    syncStoreSubscriptions()
+    const unsubscribeRegistry = childStores.subscribeRegistry(() => {
+      syncStoreSubscriptions()
+      announce()
+    })
+    // Rare writes; getSnapshot keeps the same object when nothing changed.
+    const unsubscribeIndex = useGlobalBlockingRequestsStore.subscribe(notify)
+    return () => {
+      active = false
+      unsubscribeRegistry()
+      unsubscribeIndex()
+      for (const unsubscribe of storeUnsubscribers.values()) unsubscribe()
+      storeUnsubscribers.clear()
+    }
+  }, [childStores, scopes])
   return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 
