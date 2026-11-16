@@ -1,6 +1,7 @@
 import React from 'react';
 import { useSessionTurnActivity } from '@/sync/global-session-status';
 import { getSessionActivityTime } from '@/sync/session-ordering';
+import { Icon } from '@/components/icon/Icon';
 import { SessionActivityIndicator } from '@/components/session/SessionActivityIndicator';
 import type { Session } from '@/lib/opencode/model';
 import type { SessionNode } from '@/components/session/sidebar/types';
@@ -47,6 +48,8 @@ const SwitcherRow: React.FC<{
   const pendingRequests = usePendingRequests(node, false, resolveGlobalSessionDirectory(session));
   const { hasPermission: hasPendingPermission, hasForm: hasPendingForm } = pendingRequests;
   const waitingOnUser = hasPendingPermission || hasPendingForm;
+  const permissionLabel = t('sessions.sidebar.session.status.permissionRequired');
+  const questionLabel = t('sessions.sidebar.session.status.questionPending');
   const hasActivityDuration = useHasSessionTurnDuration(session.id, isStreaming);
   const showActivityDuration = (isStreaming || showUnreadDot) && !waitingOnUser && hasActivityDuration;
   const timeLabel = formatSessionCompactDateLabel(getSessionActivityTime(session));
@@ -70,7 +73,28 @@ const SwitcherRow: React.FC<{
         ) : null}
       </span>
       {/* Activity sits on the right, before the time — no reserved left gutter. */}
-      {isStreaming || showUnreadDot ? (
+      {waitingOnUser ? (
+        <span className="flex flex-shrink-0 items-center gap-1">
+          {hasPendingPermission ? (
+            <span
+              className="inline-flex shrink-0 items-center text-status-warning"
+              aria-label={permissionLabel}
+              title={permissionLabel}
+            >
+              <Icon name="shield" className="size-3" />
+            </span>
+          ) : null}
+          {hasPendingForm ? (
+            <span
+              className="inline-flex shrink-0 items-center rounded border border-status-question-border bg-status-question-background px-1 text-status-question"
+              aria-label={questionLabel}
+              title={questionLabel}
+            >
+              <Icon name="question" className="size-3" />
+            </span>
+          ) : null}
+        </span>
+      ) : isStreaming || showUnreadDot ? (
         <SessionActivityIndicator
           state={turnActivity ?? 'unread'}
         />

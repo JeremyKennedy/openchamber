@@ -39,7 +39,7 @@ export const MobileSessionPendingBadges: React.FC<PendingRequests> = ({ hasPermi
       ) : null}
       {hasForm ? (
         <span
-          className="inline-flex shrink-0 items-center text-status-warning"
+          className="inline-flex shrink-0 items-center rounded border border-status-question-border bg-status-question-background px-1 text-status-question"
           aria-label={t('sessions.sidebar.session.status.questionPending')}
         >
           <Icon name="question" className="size-3" />

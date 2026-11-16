@@ -20,17 +20,25 @@ export function CollapsedActivityIndicator({
   className?: string;
 }): React.ReactNode {
   const { t } = useI18n();
-  if (state === 'permission' || state === 'form') {
-    const label = state === 'permission'
-      ? t('sessions.sidebar.session.status.permissionRequired')
-      : t('sessions.sidebar.session.status.questionPending');
+  if (state === 'permission') {
+    const label = t('sessions.sidebar.session.status.permissionRequired');
     return (
       <RowMarkTooltip label={label}>
-        <span
-          className={cn('inline-flex shrink-0 items-center text-status-warning', className)}
-          aria-label={label}
-        >
-          <Icon name={state === 'permission' ? 'shield' : 'question'} className="h-3 w-3" />
+        <span className={cn('inline-flex shrink-0 items-center text-status-warning', className)} aria-label={label}>
+          <Icon name="shield" className="h-3 w-3" />
+        </span>
+      </RowMarkTooltip>
+    );
+  }
+  if (state === 'form') {
+    const label = t('sessions.sidebar.session.status.questionPending');
+    // A header's mark sits inside the "Show more" button, which expands the
+    // list: a filled chip there reads as the control to press, so the group
+    // shows the bare glyph its permission mark already uses.
+    return (
+      <RowMarkTooltip label={label}>
+        <span className={cn('inline-flex shrink-0 items-center text-status-question', className)} aria-label={label}>
+          <Icon name="question" className="h-3 w-3" />
         </span>
       </RowMarkTooltip>
     );

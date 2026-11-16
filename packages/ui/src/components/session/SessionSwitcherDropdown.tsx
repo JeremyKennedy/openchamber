@@ -274,6 +274,8 @@ function SwitcherRow({ session, depth, variant, secondaryMeta, hasChildren, isEx
   // A request waiting on the user stands for the turn: the running mark steps
   // aside for the request badge, as it does on the sidebar and mobile rows.
   const waitingOnUser = hasPendingPermission || hasPendingForm;
+  const permissionLabel = t('sessions.sidebar.session.status.permissionRequired');
+  const questionLabel = t('sessions.sidebar.session.status.questionPending');
 
   const timestamp = getSessionActivityTime(session) || Date.now();
   const timeLabel = formatSessionCompactDateLabel(timestamp);
@@ -365,7 +367,28 @@ function SwitcherRow({ session, depth, variant, secondaryMeta, hasChildren, isEx
         ) : null}
       </div>
 
-      {isStreaming || showUnreadDot ? (
+      {waitingOnUser ? (
+        <span className="flex flex-shrink-0 items-center gap-1 self-center">
+          {hasPendingPermission ? (
+            <span
+              className="inline-flex shrink-0 items-center text-status-warning"
+              aria-label={permissionLabel}
+              title={permissionLabel}
+            >
+              <Icon name="shield" className="h-3 w-3" />
+            </span>
+          ) : null}
+          {hasPendingForm ? (
+            <span
+              className="inline-flex shrink-0 items-center rounded border border-status-question-border bg-status-question-background px-1 text-status-question"
+              aria-label={questionLabel}
+              title={questionLabel}
+            >
+              <Icon name="question" className="h-3 w-3" />
+            </span>
+          ) : null}
+        </span>
+      ) : isStreaming || showUnreadDot ? (
         <span className="flex h-3 w-3 flex-shrink-0 items-center justify-center self-center">
           <SessionActivityIndicator
             state={turnActivity ?? 'unread'}
