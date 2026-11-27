@@ -8,6 +8,7 @@ import { getSessionGoal } from '@/lib/sessionGoalMetadata';
 import { sessionGoalMarkLabelKey, sessionGoalStatusColor } from '@/lib/sessionGoalPresentation';
 import type { BlockingRequestKind } from '@/sync/session-request-hooks';
 import type { PendingRequests } from './usePendingRequests';
+import { SessionPendingMarks } from '@/components/session/SessionPendingMarks';
 
 export const MobileSessionGoalGlyph: React.FC<{ session: Session }> = ({ session }) => {
   const { t } = useI18n();
@@ -24,30 +25,9 @@ export const MobileSessionGoalGlyph: React.FC<{ session: Session }> = ({ session
   );
 };
 
-export const MobileSessionPendingBadges: React.FC<PendingRequests> = ({ hasPermission, hasForm }) => {
-  const { t } = useI18n();
-  if (!hasPermission && !hasForm) return null;
-  return (
-    <>
-      {hasPermission ? (
-        <span
-          className="inline-flex shrink-0 items-center text-status-warning"
-          aria-label={t('sessions.sidebar.session.status.permissionRequired')}
-        >
-          <Icon name="shield" className="size-3" />
-        </span>
-      ) : null}
-      {hasForm ? (
-        <span
-          className="inline-flex shrink-0 items-center text-status-warning"
-          aria-label={t('sessions.sidebar.session.status.questionPending')}
-        >
-          <Icon name="question" className="size-3" />
-        </span>
-      ) : null}
-    </>
-  );
-};
+export const MobileSessionPendingBadges: React.FC<PendingRequests> = ({ hasPermission, hasForm }) => (
+  <SessionPendingMarks hasPermission={hasPermission} hasForm={hasForm} />
+);
 
 const BADGE_BUTTON_STYLE: React.CSSProperties = { touchAction: 'manipulation', minHeight: 0, minWidth: 0 };
 

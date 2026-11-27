@@ -6,6 +6,7 @@ import { sessionGoalMarkLabelKey, sessionGoalStatusColor } from '@/lib/sessionGo
 import { cn } from '@/lib/utils';
 import { RowMarkTooltip } from './RowMarkTooltip';
 import { handleRowActionMouseDown, handleRowActionPointerDown } from './sessionRowActionEvents';
+import { SessionPendingMarks } from '@/components/session/SessionPendingMarks';
 
 export function SessionGoalMark({ goal }: { goal: SessionGoalPayload }): React.ReactNode {
   const { t } = useI18n();
@@ -57,8 +58,8 @@ export function DoneHintMark({ className }: { className?: string }): React.React
 type PendingRequestBadgeKind = 'permission' | 'form';
 
 const PENDING_REQUEST_BADGES = [
-  { kind: 'permission', icon: 'shield', labelKey: 'sessions.sidebar.session.status.permissionRequired', openLabelKey: 'sessions.sidebar.session.status.permissionRequiredOpen' },
-  { kind: 'form', icon: 'question', labelKey: 'sessions.sidebar.session.status.questionPending', openLabelKey: 'sessions.sidebar.session.status.questionPendingOpen' },
+  { kind: 'permission', icon: 'shield', openLabelKey: 'sessions.sidebar.session.status.permissionRequiredOpen' },
+  { kind: 'form', icon: 'question', openLabelKey: 'sessions.sidebar.session.status.questionPendingOpen' },
 ] as const;
 
 const BADGE_BUTTON_STYLE: React.CSSProperties = { minHeight: 0, minWidth: 0 };
@@ -69,18 +70,9 @@ export function PendingRequestBadges({ hasPermission, hasForm, onOpen }: {
   onOpen?: (kind: PendingRequestBadgeKind, target: HTMLElement) => void;
 }): React.ReactNode {
   const { t } = useI18n();
-  return PENDING_REQUEST_BADGES.map(({ kind, icon, labelKey, openLabelKey }) => {
+  if (!onOpen) return <SessionPendingMarks hasPermission={hasPermission} hasForm={hasForm} tooltip />;
+  return PENDING_REQUEST_BADGES.map(({ kind, icon, openLabelKey }) => {
     if (!(kind === 'permission' ? hasPermission : hasForm)) return null;
-    if (!onOpen) {
-      const label = t(labelKey);
-      return (
-        <RowMarkTooltip key={kind} label={label}>
-          <span className="inline-flex flex-shrink-0 items-center text-status-warning" aria-label={label}>
-            <Icon name={icon} className="h-3 w-3" />
-          </span>
-        </RowMarkTooltip>
-      );
-    }
     const label = t(openLabelKey);
     return (
       <RowMarkTooltip key={kind} label={label}>
